@@ -40,6 +40,10 @@
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
             backdrop-filter: blur(4px);
             width: 270px;
+            max-height: 80vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
         }
 
         .hidden {
@@ -481,6 +485,14 @@
         // Toggle UI Event
         document.getElementById('toggle-ui').addEventListener('click', () => {
             document.getElementById('ui').classList.toggle('hidden');
+        });
+
+        // Prevent UI scrolling/interacting from affecting the canvas camera
+        const uiElement = document.getElementById('ui');
+        ['touchstart', 'touchmove', 'pointerdown', 'wheel'].forEach(eventName => {
+            uiElement.addEventListener(eventName, (e) => {
+                e.stopPropagation();
+            });
         });
 
         // Palette Change Event
