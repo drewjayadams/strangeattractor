@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Strange Attractors</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #0a0a0a;
+            overflow: hidden;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            touch-action: none; /* Prevents default pull-to-refresh on touch devices */
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            cursor: grab;
+        }
+
+        canvas:active {
+            cursor: grabbing;
+        }
+
+        #ui {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            background: rgba(15, 17, 22, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 20px;
+            color: rgba(200, 205, 210, 0.85);
+            z-index: 10;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            width: 270px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #toggle-ui {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.2);
+            font-size: 28px;
+            cursor: pointer;
+            z-index: 20;
+            transition: color 0.3s;
+        }
+
+        #toggle-ui:hover {
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        h1 {
+            margin: 0 0 12px 0;
+            font-size: 1.2rem;
+            font-weight: 400;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        label {
+            font-size: 0.85rem;
+            opacity: 0.8;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        select {
+            background: rgba(0, 0, 0, 0.3);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 8px;
+            border-radius: 4px;
+            font-family: inherit;
+            outline: none;
+            cursor: pointer;
+        }
+        
+        select:focus {
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .hint {
+            font-size: 0.75rem;
+            opacity: 0.5;
+            margin-top: 8px;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        
+        #equations {
+            font-size: 0.8rem;
+            color: #8da1b9;
+            margin-top: 8px;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        #data-hud {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            color: rgba(200, 205, 210, 0.85);
+            font-family: 'Courier New', Courier, monospace;
+            text-align: left;
+            transition: opacity 0.5s ease-in-out;
+            pointer-events: none;
+        }
+
+        .hud-title { 
+            font-weight: bold; 
+            font-size: 1rem; 
+            margin-bottom: 5px; 
+            color: #fff; 
+            text-transform: uppercase; 
+            letter-spacing: 1px;
+        }
+        
+        .hud-stat { 
+            font-size: 0.85rem; 
+            opacity: 0.8; 
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="toggle-ui">☰</button>
+
+    <div id="ui" class="hidden">
+        <h1>Strange Attractor</h1>
+        <div class="controls">
+            <label>
+                Select System:
+                <select id="attractor-select">
+                    <option value="lorenz">Lorenz Attractor</option>
+                    <option value="rossler">Rössler Attractor</option>
+                    <option value="thomas">Thomas' Cyclically Symmetric</option>
+                    <option value="chen">Chen Attractor</option>
+                    <option value="aizawa">Aizawa Attractor</option>
+                    <option value="halvorsen">Halvorsen Attractor</option>
+                    <option value="dadras">Dadras Attractor</option>
+                </select>
+            </label>
+            <label>
+                Color Palette:
+                <select id="palette-select">
+                    <option value="mixed">Mixed Conservative</option>
+                    <option value="ocean">Ocean Depth</option>
+                    <option value="forest">Forest Canopy</option>
+                    <option value="autumn">Autumn</option>
+                </select>
+            </label>
+            <label>
+                Live Data Source:
+                <select id="source-select">
+                    <option value="mtg">Scryfall (MTG Commanders)</option>
+                    <option value="weather">Open-Meteo (Chicago Weather)</option>
+                    <option value="wiki">Wikimedia (Recent Edits)</option>
+                    <option value="binance">Binance (BTC Trades)</option>
+                </select>
+            </label>
+        </div>
+        <div id="equations"></div>
+        <div class="hint">Drag to rotate | Scroll to zoom</div>
+        
+        <div id="data-hud" style="opacity: 0;">
+            <div class="hud-title"><span id="hud-name">Loading Stream...</span></div>
+            <div class="hud-stat" id="hud-line1"></div>
+            <div class="hud-stat" id="hud-line2"></div>
+        </div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // --- MODULAR DATA ARCHITECTURE ---
+        // Placeholder for future live data (e.g., SSE streams)
+        const simulationState = {
+            activeAttractor: null,
+            params: {}, 
+            targetParams: {},
+            currentDt: 0.01,
+            targetDt: 0.01,
+            currentScale: 20,
+            targetScale: 20,
+            rotX: 0,
+            rotY: 0,
+            zoom: 1,
+            currentPalette: []
+        };
+
+        function updateSimulationParameters(newData) {
+            // Smoothly target new parameters instead of hard-overwriting to avoid explosions
+            simulationState.targetParams = { ...simulationState.targetParams, ...newData };
+        }
+
+        // --- ATTRACTOR DEFINITIONS ---
+        const ATTRACTORS = {
+            lorenz: {
+                name: "Lorenz",
+                equations: "dx/dt = σ(y-x)\ndy/dt = x(ρ-z)-y\ndz/dt = xy-βz",
+                defaultParams: { sigma: 10, rho: 28, beta: 8/3 },
+                step: (p, dt, params) => {
+                    let dx = params.sigma * (p.y - p.x);
+                    let dy = p.x * (params.rho - p.z) - p.y;
+                    let dz = p.x * p.y - params.beta * p.z;
+                    p.x += dx * dt; p.y += dy * dt; p.z += dz * dt;
+                },
+                dt: 0.005, scale: 17, spread: 15,
+                offsetX: 0, offsetY: 0, offsetZ: 24,
+                initialRotX: 1.2, initialRotY: -0.6
+            },
+            rossler: {
+                name: "Rössler",
+                equations: "dx/dt = -y-z\ndy/dt = x+ay\ndz/dt = b+z(x-c)",
+                defaultParams: { a: 0.2, b: 0.2, c: 5.7 },
+                step: (p, dt, params) => {
+                    let dx = -(p.y + p.z);
+                    let dy = p.x + params.a * p.y;
+                    let dz = params.b + p.z * (p.x - params.c);
+                    p.x += dx * dt; p.y += dy * dt; p.z += dz * dt;
+                },
+                dt: 0.015, scale: 20, spread: 8,
+                offsetX: 0, offsetY: 0, offsetZ: 0,
+                initialRotX: 0.8, initialRotY: 0.3
+            },
+            thomas: {
+                name: "Thomas",
+                equations: "dx/dt = sin(y)-bx\ndy/dt = sin(z)-by\ndz/dt = sin(x)-bz",
+                defaultParams: { b: 0.208186 },
+                step: (p, dt, params) => {
+                    let dx = Math.sin(p.y) - params.b * p.x;
+                    let dy = Math.sin(p.z) - params.b * p.y;
+                    let dz = Math.sin(p.x) - params.b * p.z;
+                    p.x += dx * dt; p.y += dy * dt; p.z += dz * dt;
+                },
+                dt: 0.05, scale: 75, spread: 3,
+                offsetX: 0, offsetY: 0, offsetZ: 0,
+                initialRotX: 0.6, initialRotY: 0.8
+            },
+            chen: {
+                name: "Chen",
+                equations: "dx/dt = a(y-x)\ndy/dt = (c-a)x-xz+cy\ndz/dt = xy-bz",
+                defaultParams: { a: 40, b: 3, c: 28 },
+                step: (p, dt, params) => {
+                    let dx = params.a * (p.y - p.x);
+                    let dy = (params.c - params.a) * p.x - p.x * p.z + params.c * p.y;
+                    let dz = p.x * p.y - params.b * p.z;
+                    p.x += dx * dt; p.y += dy * dt; p.z += dz * dt;
+                },
+                dt: 0.004, scale: 15, spread: 10,
+                offsetX: 0, offsetY: 0, offsetZ: 20,
+                initialRotX: 1.2, initialRotY: -0.6
+            },
+            aizawa: {
+                name: "Aizawa",
+                equations: "dx/dt = (z-b)x-dy\ndy/dt = dx+(z-b)y\ndz/dt = c+az-z³/3-(x²+y²)(1+ez)+fz(x³)",
+                defaultParams: { a: 0.95, b: 0.7, c: 0.6, d: 3.5, e: 0.25, f: 0.1 },
+                step: (p, dt, params) => {
+                    let x = p.x, y = p.y, z = p.z;
+                    let dx = (z - params.b) * x - params.d * y;
+                    let dy = params.d * x + (z - params.b) * y;
+                    let dz = params.c + params.a * z - (z * z * z) / 3 - (x * x + y * y) * (1 + params.e * z) + params.f * z * (x * x * x);
+                    p.x += dx * dt; p.y += dy * dt; p.z += dz * dt;
+                },
+                dt: 0.015, scale: 150, spread: 1,
+                offsetX: 0, offsetY: 0, offsetZ: 0.5,
+                initialRotX: 1.0, initialRotY: 0.2
+            },
+            halvorsen: {
+                name: "Halvorsen",
+                equations: "dx/dt = -ax-4y-4z-y²\ndy/dt = -ay-4z-4x-z²\ndz/dt = -az-4x-4y-x²",
+                defaultParams: { a: 1.89 },
+                step: (p, dt, params) => {
+                    let dx = -params.a * p.x - 4 * p.y - 4 * p.z - p.y * p.y;
+                    let dy = -params.a * p.y - 4 * p.z - 4 * p.x - p.z * p.z;
+                    let dz = -params.a * p.z - 4 * p.x - 4 * p.y - p.x * p.x;
+                    p.x += dx * dt; p.y += dy * dt; p.z += dz * dt;
+                },
+                dt: 0.005, scale: 30, spread: 5,
+                offsetX: 0, offsetY: 0, offsetZ: 0,
+                initialRotX: 0.5, initialRotY: 0.5
+            },
+            dadras: {
+                name: "Dadras",
+                equations: "dx/dt = y-ax+byz\ndy/dt = cy-xz+z\ndz/dt = dxy-ez",
+                defaultParams: { a: 3, b: 2.7, c: 1.7, d: 2, e: 9 },
+                step: (p, dt, params) => {
+                    let dx = p.y - params.a * p.x + params.b * p.y * p.z;
+                    let dy = params.c * p.y - p.x * p.z + p.z;
+                    let dz = params.d * p.x * p.y - params.e * p.z;
+                    p.x += dx * dt; p.y += dy * dt; p.z += dz * dt;
+                },
+                dt: 0.005, scale: 25, spread: 5,
+                offsetX: 0, offsetY: 0, offsetZ: 0,
+                initialRotX: 1.0, initialRotY: 0.3
+            }
+        };
+
+        // --- CONSERVATIVE COLOR PALETTES ---
+        const PALETTES = {
+            mixed: [
+                { h: 215, s: 70, l: 50 }, // Navy Blue
+                { h: 210, s: 30, l: 55 }, // Slate
+                { h: 140, s: 50, l: 40 }, // Forest Green
+                { h: 75,  s: 60, l: 40 }, // Olive
+                { h: 20,  s: 70, l: 45 }, // Rust / Rich Brown
+                { h: 35,  s: 60, l: 40 }  // Umber
+            ],
+            ocean: [
+                { h: 210, s: 80, l: 30 }, // Deep Blue
+                { h: 200, s: 70, l: 40 }, // Sea Slate
+                { h: 190, s: 60, l: 35 }, // Dark Teal
+                { h: 220, s: 50, l: 25 }, // Midnight Blue
+                { h: 180, s: 40, l: 45 }, // Muted Aqua
+            ],
+            forest: [
+                { h: 140, s: 60, l: 25 }, // Dark Forest
+                { h: 110, s: 50, l: 30 }, // Pine
+                { h: 80,  s: 60, l: 35 }, // Moss
+                { h: 40,  s: 50, l: 30 }, // Bark Brown
+                { h: 160, s: 40, l: 40 }, // Muted Emerald
+            ],
+            autumn: [
+                { h: 15,  s: 80, l: 40 }, // Deep Rust
+                { h: 0,   s: 70, l: 35 }, // Crimson Brown
+                { h: 30,  s: 80, l: 45 }, // Burnt Orange
+                { h: 45,  s: 70, l: 35 }, // Dark Gold
+                { h: 350, s: 60, l: 30 }, // Burgundy
+            ]
+        };
+
+        // MTG Conservative Color Map
+        const MTG_COLORS = {
+            'W': [ { h: 40, s: 20, l: 85 }, { h: 210, s: 10, l: 60 } ],
+            'U': [ { h: 215, s: 70, l: 40 }, { h: 210, s: 40, l: 50 } ],
+            'B': [ { h: 260, s: 10, l: 25 }, { h: 30, s: 20, l: 20 } ],
+            'R': [ { h: 15, s: 70, l: 45 }, { h: 0, s: 60, l: 35 } ],
+            'G': [ { h: 140, s: 50, l: 30 }, { h: 75, s: 60, l: 35 } ],
+            'C': [ { h: 35, s: 40, l: 50 }, { h: 40, s: 30, l: 60 } ] // Colorless
+        };
+        
+        simulationState.currentPalette = PALETTES.mixed;
+
+        // Stream Management State
+        let currentStreamInterval = null;
+        let currentEventSource = null;
+        let currentWebSocket = null;
+
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        let width, height, centerX, centerY;
+        
+        // --- PARTICLE SYSTEM ---
+        const NUM_PARTICLES = 150;
+        const MAX_HISTORY = 100;
+
+        class Particle {
+            constructor() {
+                this.reset();
+                this.h = this.targetH;
+                this.s = this.targetS;
+                this.l = this.targetL;
+            }
+
+            pickTargetColor() {
+                const palette = simulationState.currentPalette;
+                const baseColor = palette[Math.floor(Math.random() * palette.length)];
+                this.targetH = baseColor.h + (Math.random() * 10 - 5);
+                this.targetS = baseColor.s;
+                this.targetL = baseColor.l + (Math.random() * 10 - 5);
+            }
+
+            reset() {
+                const attr = simulationState.activeAttractor;
+                if (!attr) return;
+                this.x = (Math.random() - 0.5) * attr.spread;
+                this.y = (Math.random() - 0.5) * attr.spread;
+                this.z = (Math.random() - 0.5) * attr.spread;
+                this.history = [];
+                this.pickTargetColor();
+            }
+
+            update() {
+                // Smoothly interpolate current color towards target color
+                this.h += (this.targetH - this.h) * 0.05;
+                this.s += (this.targetS - this.s) * 0.05;
+                this.l += (this.targetL - this.l) * 0.05;
+
+                const attr = simulationState.activeAttractor;
+                this.history.push({ x: this.x, y: this.y, z: this.z });
+                if (this.history.length > MAX_HISTORY) {
+                    this.history.shift();
+                }
+                attr.step(this, simulationState.currentDt, simulationState.params);
+
+                // Robustness check: reset particle if it blows up or vanishes
+                if (!Number.isFinite(this.x) || !Number.isFinite(this.y) || !Number.isFinite(this.z) ||
+                    Math.abs(this.x) > 10000 || Math.abs(this.y) > 10000 || Math.abs(this.z) > 10000) {
+                    this.reset();
+                }
+            }
+        }
+
+        const particles = [];
+
+        // --- INITIALIZATION ---
+        function setAttractor(key) {
+            const attr = ATTRACTORS[key];
+            if (!attr) return;
+            
+            simulationState.activeAttractor = attr;
+            simulationState.params = { ...attr.defaultParams };
+            simulationState.targetParams = { ...attr.defaultParams };
+            simulationState.currentDt = attr.dt;
+            simulationState.targetDt = attr.dt;
+            simulationState.currentScale = attr.scale;
+            simulationState.targetScale = attr.scale;
+            simulationState.rotX = attr.initialRotX;
+            simulationState.rotY = attr.initialRotY;
+            simulationState.zoom = 1; // Reset zoom when switching systems
+            
+            document.getElementById('equations').innerText = attr.equations;
+            
+            // Populate/Reset particles
+            if (particles.length === 0) {
+                for (let i = 0; i < NUM_PARTICLES; i++) {
+                    particles.push(new Particle());
+                }
+            } else {
+                particles.forEach(p => p.reset());
+            }
+        }
+
+        document.getElementById('attractor-select').addEventListener('change', (e) => {
+            setAttractor(e.target.value);
+            // Re-apply latest perturbations to the new base parameters
+            applyPerturbation([]);
+        });
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            centerX = width / 2;
+            centerY = height / 2;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+        
+        // Init default
+        setAttractor('lorenz');
+
+        // Toggle UI Event
+        document.getElementById('toggle-ui').addEventListener('click', () => {
+            document.getElementById('ui').classList.toggle('hidden');
+        });
+
+        // Palette Change Event
+        document.getElementById('palette-select').addEventListener('change', (e) => {
+            simulationState.currentPalette = PALETTES[e.target.value];
+            
+            // Immediately apply new palette unless MTG is fully overriding
+            const currentSource = document.getElementById('source-select').value;
+            if (currentSource !== 'mtg') {
+                particles.forEach(p => p.pickTargetColor());
+            }
+        });
+
+        // --- CAMERA CONTROLS (DRAG) ---
+        let isDragging = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        function startDrag(e) {
+            isDragging = true;
+            lastX = e.touches ? e.touches[0].clientX : e.clientX;
+            lastY = e.touches ? e.touches[0].clientY : e.clientY;
+        }
+
+        function drag(e) {
+            if (!isDragging) return;
+            
+            const currentX = e.touches ? e.touches[0].clientX : e.clientX;
+            const currentY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            const deltaX = currentX - lastX;
+            const deltaY = currentY - lastY;
+
+            // Sensitivity scaling
+            simulationState.rotY += deltaX * 0.005;
+            simulationState.rotX += deltaY * 0.005;
+
+            lastX = currentX;
+            lastY = currentY;
+        }
+
+        function endDrag() {
+            isDragging = false;
+        }
+
+        // Mouse Events
+        canvas.addEventListener('mousedown', startDrag);
+        window.addEventListener('mousemove', drag);
+        window.addEventListener('mouseup', endDrag);
+
+        // Touch Events
+        canvas.addEventListener('touchstart', startDrag, { passive: false });
+        window.addEventListener('touchmove', drag, { passive: false });
+        window.addEventListener('touchend', endDrag);
+
+        // Zoom (Scroll) Event
+        window.addEventListener('wheel', (e) => {
+            e.preventDefault(); 
+            const zoomSpeed = 0.002;
+            simulationState.zoom -= e.deltaY * zoomSpeed;
+            // Clamp zoom tightly to avoid visual glitches
+            simulationState.zoom = Math.max(0.1, Math.min(simulationState.zoom, 10));
+        }, { passive: false });
+
+        // --- 3D to 2D FIXED PROJECTION ---
+        function project(x, y, z) {
+            const attr = simulationState.activeAttractor;
+            
+            // Center the geometry
+            let px = x - attr.offsetX;
+            let py = y - attr.offsetY;
+            let pz = z - attr.offsetZ;
+
+            // Rotate around Y axis based on camera rotation
+            let x1 = px * Math.cos(simulationState.rotY) - pz * Math.sin(simulationState.rotY);
+            let z1 = px * Math.sin(simulationState.rotY) + pz * Math.cos(simulationState.rotY);
+
+            // Rotate around X axis based on camera rotation
+            let y2 = py * Math.cos(simulationState.rotX) - z1 * Math.sin(simulationState.rotX);
+
+            let effectiveScale = simulationState.currentScale * simulationState.zoom;
+
+            return {
+                x: centerX + x1 * effectiveScale,
+                y: centerY + y2 * effectiveScale
+            };
+        }
+
+        // --- LIVE DATA MULTIPLEXING & PERTURBATION ---
+        
+        function updateHUD(title, line1, line2) {
+            document.getElementById('hud-name').innerText = title;
+            document.getElementById('hud-line1').innerText = line1;
+            document.getElementById('hud-line2').innerText = line2;
+            document.getElementById('data-hud').style.opacity = '1';
+        }
+
+        // Applies up to ±35% variance to the base parameters of the active system
+        function applyPerturbation(modifiers = []) {
+            const attr = simulationState.activeAttractor;
+            if (!attr) return;
+            
+            const base = attr.defaultParams;
+            const keys = Object.keys(base);
+            let newTargetParams = {};
+            
+            const MAX_VARIANCE = 0.80; // 80% perturbation allowance for drastic shifts
+
+            for (let i = 0; i < keys.length; i++) {
+                let mod = modifiers[i] !== undefined ? modifiers[i] : (Math.random() * 2 - 1);
+                // Clamp modifier to max variance limits
+                mod = Math.max(-MAX_VARIANCE, Math.min(MAX_VARIANCE, mod));
+                newTargetParams[keys[i]] = base[keys[i]] * (1 + mod);
+            }
+            
+            // Radically alter the speed of the geometric shape (Scale perturbation removed)
+            let dtMod = modifiers[0] !== undefined ? modifiers[0] : (Math.random() * 2 - 1);
+            
+            dtMod = Math.max(-MAX_VARIANCE, Math.min(MAX_VARIANCE, dtMod));
+
+            simulationState.targetDt = attr.dt * (1 + dtMod);
+            simulationState.targetScale = attr.scale; // Scale remains strictly tied to the base setting
+
+            updateSimulationParameters(newTargetParams);
+            // Cause some visual flux by randomly triggering a few color shifts
+            if (Math.random() > 0.5) particles[Math.floor(Math.random() * particles.length)].pickTargetColor();
+        }
+
+        function stopCurrentStream() {
+            if (currentStreamInterval) clearInterval(currentStreamInterval);
+            if (currentEventSource) currentEventSource.close();
+            if (currentWebSocket) currentWebSocket.close();
+            currentStreamInterval = null;
+            currentEventSource = null;
+            currentWebSocket = null;
+            document.getElementById('data-hud').style.opacity = '0';
+        }
+
+        // Source 1: Scryfall (Polling)
+        async function fetchCommanderData() {
+            try {
+                const response = await fetch('https://api.scryfall.com/cards/random?q=is%3Acommander');
+                const card = await response.json();
+                
+                updateHUD(
+                    card.name || "Unknown Commander",
+                    card.mana_cost ? `Mana: ${card.mana_cost}` : 'Mana: None',
+                    (card.power !== undefined) ? `Stats: ${card.power} / ${card.toughness}` : (card.loyalty ? `Loyalty: ${card.loyalty}` : "Stats: N/A")
+                );
+
+                // Palette map logic
+                let newPalette = [];
+                const identity = card.color_identity || [];
+                if (identity.length === 0) newPalette = [...MTG_COLORS['C']];
+                else identity.forEach(color => { if (MTG_COLORS[color]) newPalette.push(...MTG_COLORS[color]); });
+                
+                simulationState.currentPalette = newPalette;
+                particles.forEach(p => p.pickTargetColor());
+
+                // Large variance math mapped directly from MTG stats
+                const cmc = parseInt(card.cmc) || 0;
+                const power = parseInt(card.power) || 0;
+                const toughness = parseInt(card.toughness) || 0;
+                
+                applyPerturbation([
+                    (cmc / 8) * 0.35, 
+                    ((power - toughness) / 10) * 0.35, 
+                    ((power + toughness) / 15) * 0.35 
+                ]);
+
+            } catch (err) { console.warn("MTG Stream Error", err); }
+        }
+
+        function startMTGStream() {
+            fetchCommanderData();
+            currentStreamInterval = setInterval(fetchCommanderData, 5000);
+        }
+
+        // Source 2: Open-Meteo Chicago Weather (Polling)
+        async function fetchWeatherData() {
+            try {
+                const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=41.8781&longitude=-87.6298&current_weather=true');
+                const data = await res.json();
+                const cw = data.current_weather;
+                
+                updateHUD(
+                    "Chicago Weather",
+                    `Temp: ${cw.temperature}°C`,
+                    `Wind: ${cw.windspeed} km/h (Dir: ${cw.winddirection}°)`
+                );
+
+                const currentPaletteKey = document.getElementById('palette-select').value;
+                simulationState.currentPalette = PALETTES[currentPaletteKey]; // Revert to selected base
+
+                // Map temp (-20 to 40) and wind (0 to 50) to -35% to +35% shifts
+                applyPerturbation([
+                    (cw.temperature / 40) * 0.35,
+                    (cw.windspeed / 50) * 0.35,
+                    ((cw.winddirection - 180) / 180) * 0.35
+                ]);
+            } catch (err) { console.warn("Weather Stream Error", err); }
+        }
+
+        function startWeatherStream() {
+            fetchWeatherData();
+            currentStreamInterval = setInterval(fetchWeatherData, 5000);
+        }
+
+        // Source 3: Wikimedia Recent Changes (SSE)
+        function startWikiStream() {
+            currentEventSource = new EventSource('https://stream.wikimedia.org/v2/stream/recentchange');
+            
+            const currentPaletteKey = document.getElementById('palette-select').value;
+            simulationState.currentPalette = PALETTES[currentPaletteKey];
+            
+            let lastUpdate = 0;
+            currentEventSource.onmessage = (e) => {
+                // Throttle intense wikimedia stream so the visualization can breathe
+                if (Date.now() - lastUpdate < 1500) return;
+                
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.type === 'edit' && data.length) {
+                        lastUpdate = Date.now();
+                        
+                        const diff = data.length.new - (data.length.old || 0);
+                        updateHUD(
+                            "Wiki Edit: " + data.server_name,
+                            `Page: ${data.title.substring(0, 20)}...`,
+                            `Diff: ${diff > 0 ? '+' : ''}${diff} bytes by ${data.user.substring(0,15)}`
+                        );
+
+                        // Massive edits cause massive perturbations
+                        applyPerturbation([
+                            (diff / 500) * 0.35,
+                            (data.title.length / 50) * 0.35,
+                            (data.user.length / 20) * 0.35
+                        ]);
+                    }
+                } catch(err) { /* ignore parse errors on fast stream */ }
+            };
+        }
+
+        // Source 4: Binance BTC/USDT (WebSocket)
+        function startBinanceStream() {
+            currentWebSocket = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@trade');
+            
+            const currentPaletteKey = document.getElementById('palette-select').value;
+            simulationState.currentPalette = PALETTES[currentPaletteKey];
+
+            let lastUpdate = 0;
+            let lastPrice = null;
+
+            currentWebSocket.onmessage = (e) => {
+                if (Date.now() - lastUpdate < 1500) return; // Throttle to 1.5s
+                
+                try {
+                    const data = JSON.parse(e.data);
+                    lastUpdate = Date.now();
+                    const price = parseFloat(data.p);
+                    const qty = parseFloat(data.q);
+                    
+                    const priceChange = lastPrice ? price - lastPrice : 0;
+                    lastPrice = price;
+
+                    updateHUD(
+                        "Binance Trade",
+                        `Pair: BTC/USDT`,
+                        `Price: $${price.toFixed(2)} | Qty: ${qty.toFixed(4)}`
+                    );
+
+                    // High frequency volatility mappings
+                    applyPerturbation([
+                        (priceChange / 10) * 0.35, // Sensitivity to $10 swings
+                        (qty / 2) * 0.35,          // Sensitivity to > 2 BTC orders
+                        (data.T % 1000) / 1000 * 0.35 // Pseudo-random jitter based on timestamp
+                    ]);
+                } catch(err) {}
+            };
+        }
+
+        // Initialize streams and UI handling
+        document.getElementById('source-select').addEventListener('change', (e) => {
+            stopCurrentStream();
+            const source = e.target.value;
+            if (source === 'mtg') startMTGStream();
+            else if (source === 'weather') startWeatherStream();
+            else if (source === 'wiki') startWikiStream();
+            else if (source === 'binance') startBinanceStream();
+        });
+
+        // Start default
+        startMTGStream();
+
+        // --- RENDER LOOP ---
+        function render() {
+            // Smoothly lerp current parameters towards target parameters
+            const params = simulationState.params;
+            const targets = simulationState.targetParams;
+            for (let key in targets) {
+                if (params[key] !== undefined) {
+                    params[key] += (targets[key] - params[key]) * 0.02; 
+                }
+            }
+            
+            // Smoothly lerp the speed and size perturbations
+            simulationState.currentDt += (simulationState.targetDt - simulationState.currentDt) * 0.02;
+            simulationState.currentScale += (simulationState.targetScale - simulationState.currentScale) * 0.02;
+
+            // Clear canvas with dark conservative background
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            particles.forEach(p => {
+                p.update();
+
+                if (p.history.length < 2) return;
+
+                // Project history into 2D
+                const projHist = p.history.map(pt => project(pt.x, pt.y, pt.z));
+
+                // Draw continuous tail segment by segment
+                for (let i = 1; i < projHist.length; i++) {
+                    let ptA = projHist[i - 1];
+                    let ptB = projHist[i];
+
+                    // T for interpolation along tail
+                    let t = i / (projHist.length - 1);
+
+                    // Fade quadratically for better visual comet effect
+                    let alpha = Math.pow(t, 2) * 0.8;
+                    
+                    // Taper thickness
+                    let thickness = 0.5 + (t * 2.5);
+
+                    ctx.beginPath();
+                    ctx.moveTo(ptA.x, ptA.y);
+                    ctx.lineTo(ptB.x, ptB.y);
+
+                    ctx.strokeStyle = `hsla(${p.h}, ${p.s}%, ${p.l}%, ${alpha})`;
+                    ctx.lineWidth = thickness;
+                    ctx.stroke();
+                }
+            });
+            
+            requestAnimationFrame(render);
+        }
+
+        // Start animation
+        render();
+
+    </script>
+</body>
+</html>
