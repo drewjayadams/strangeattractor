@@ -411,11 +411,20 @@
                 if (this.history.length > MAX_HISTORY) {
                     this.history.shift();
                 }
+                
+                let oldX = this.x, oldY = this.y, oldZ = this.z;
                 attr.step(this, simulationState.currentDt, simulationState.params);
 
-                // Robustness check: reset particle if it blows up or vanishes
+                // Calculate squared velocity to detect if particle is stuck at a fixed point
+                let velX = (this.x - oldX) / simulationState.currentDt;
+                let velY = (this.y - oldY) / simulationState.currentDt;
+                let velZ = (this.z - oldZ) / simulationState.currentDt;
+                let velSq = velX*velX + velY*velY + velZ*velZ;
+
+                // Robustness check: reset particle if it blows up, vanishes, or gets stuck
                 if (!Number.isFinite(this.x) || !Number.isFinite(this.y) || !Number.isFinite(this.z) ||
-                    Math.abs(this.x) > 10000 || Math.abs(this.y) > 10000 || Math.abs(this.z) > 10000) {
+                    Math.abs(this.x) > 10000 || Math.abs(this.y) > 10000 || Math.abs(this.z) > 10000 ||
+                    velSq < 0.001) {
                     this.reset();
                 }
             }
@@ -578,19 +587,21 @@
             const keys = Object.keys(base);
             let newTargetParams = {};
             
-            const MAX_VARIANCE = 0.80; // 80% perturbation allowance for drastic shifts
+            // Aizawa is mathematically brittle; clamp its variance to 8% to prevent collapsing to a sink.
+            // Other chaotic systems can handle the 80% heavy perturbation allowance for drastic shifts.
+            const maxVariance = (attr.name === "Aizawa") ? 0.08 : 0.80; 
 
             for (let i = 0; i < keys.length; i++) {
                 let mod = modifiers[i] !== undefined ? modifiers[i] : (Math.random() * 2 - 1);
                 // Clamp modifier to max variance limits
-                mod = Math.max(-MAX_VARIANCE, Math.min(MAX_VARIANCE, mod));
+                mod = Math.max(-maxVariance, Math.min(maxVariance, mod));
                 newTargetParams[keys[i]] = base[keys[i]] * (1 + mod);
             }
             
             // Radically alter the speed of the geometric shape (Scale perturbation removed)
             let dtMod = modifiers[0] !== undefined ? modifiers[0] : (Math.random() * 2 - 1);
             
-            dtMod = Math.max(-MAX_VARIANCE, Math.min(MAX_VARIANCE, dtMod));
+            dtMod = Math.max(-maxVariance, Math.min(maxVariance, dtMod));
 
             simulationState.targetDt = attr.dt * (1 + dtMod);
             simulationState.targetScale = attr.scale; // Scale remains strictly tied to the base setting
